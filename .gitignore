@@ -1,0 +1,11 @@
+public/fonts
+node_modules
+dist
+dev-dist
+dist-e2e
+
+# Personal board backups (research data): never commit
+mirobackup/
+
+# macOS
+.DS_Store
