@@ -179,3 +179,13 @@ input.project-title { width: 100%; font-weight: 600; }
   .project.collapsed { grid-template-columns: 1fr; grid-template-rows: 0 1fr; }
   .sidebar { max-height: 40vh; border-right: none; border-bottom: 1px solid var(--border); }
 }
+
+/* PDF export */
+.pdf-quick { justify-self: stretch; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.pdf-dialog { width: min(560px, 100%); }
+.frame-list-tools { display: flex; gap: 8px; align-items: center; }
+.frame-list { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+.frame-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.frame-list li:last-child { border-bottom: none; }
+.frame-list label { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
+.frame-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -13,8 +13,10 @@
   },
   "dependencies": {
     "@excalidraw/excalidraw": "^0.18.1",
+    "jspdf": "^4.2.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "svg2pdf.js": "^2.8.1",
     "trystero": "^0.26.0",
     "y-indexeddb": "^9.0.12",
     "yjs": "^13.6.33"

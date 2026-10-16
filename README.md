@@ -37,6 +37,13 @@ an app window.
 - **Project sidebar**: switch boards, *+ New* board, double-click a board to rename it,
   hover a board to see the delete button, *Import .excalidraw…*, *Export board* (an
   `.excalidraw` file), *Back up project* (a `.tablo.json` file with every board).
+- **Export frames to PDF**: select a frame (or anything inside one) and click the
+  *PDF of “frame name”* button in the sidebar for a one-click download, or use
+  *Export frames to PDF…* to pick frames from a list: one PDF per frame, or one PDF with a
+  page per frame. Files are named after their frames. The PDFs are vector (sharp at any
+  zoom, small files) and their text is real, selectable text, so they work well as figures
+  in LaTeX/Overleaf. Excalidraw's fonts are embedded from `public/pdf-fonts/`
+  (regenerate with `python3 scripts/build-pdf-fonts.py` after upgrading Excalidraw).
 - **Share project…**: asks for your name (shown next to your cursor), then gives you a link.
   Anyone with the link can see and edit **every board in that project**. Treat it like a password.
 
@@ -111,6 +118,7 @@ machine (it starts its own Nostr relay). It uses your installed Google Chrome; s
 | `src/board/BoardCanvas.tsx` | Excalidraw ↔ Yjs binding, cursors of collaborators |
 | `src/sync/p2p.ts` | Peer-to-peer sync (Trystero + Nostr), presence |
 | `src/board/importExport.ts` | `.excalidraw` import/export, project backups |
+| `src/board/pdfExport.ts`, `src/ui/PdfDialog.tsx` | Frame → PDF export |
 | `src/ui/` | Home page, project view, dialogs, styles |
 | `tests/e2e.mjs` | Two-browser end-to-end test |
 
@@ -121,4 +129,5 @@ machine (it starts its own Nostr relay). It uses your installed Google Chrome; s
 - Read-only share links.
 - Desktop wrapper (Tauri) that saves boards as files in a folder.
 
-Built on Excalidraw (MIT), Yjs (MIT), y-indexeddb (MIT) and Trystero (MIT).
+Built on Excalidraw (MIT), Yjs (MIT), y-indexeddb (MIT), Trystero (MIT), jsPDF (MIT) and svg2pdf.js (MIT).
+The embedded fonts are Excalidraw's (SIL Open Font License, MIT for Comic Shanns).

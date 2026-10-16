@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getProject, getUserName, setUserName, shareLink, updateProject, colorFor } from "../store/library";
 import { getProjectDoc, type ProjectDoc } from "../store/project";
 import { P2PSync } from "../sync/p2p";
@@ -6,6 +6,9 @@ import { BoardCanvas, boardToExcalidrawFile } from "../board/BoardCanvas";
 import { download, exportProject, importBoards, safeFileName } from "../board/importExport";
 import { navigate, useBoards, usePeers, useProjectName, useProjects } from "./hooks";
 import { NameDialog } from "./NameDialog";
+import { PdfDialog, exportFramesPdf } from "./PdfDialog";
+import { framesForSelection, listFrames } from "../board/pdfExport";
+import { boardScene } from "../board/BoardCanvas";
 
 export function ProjectView({ projectId, boardId }: { projectId: string; boardId: string | null }) {
   const entry = useProjects().find((p) => p.id === projectId) ?? getProject(projectId)!;
@@ -16,6 +19,9 @@ export function ProjectView({ projectId, boardId }: { projectId: string; boardId
   const [shareOpen, setShareOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [notice, setNotice] = useState("");
+  const [selection, setSelection] = useState<string[]>([]);
+  const [pdfOpen, setPdfOpen] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState("");
   const boards = useBoards(project);
   const projectName = useProjectName(project);
   const peers = usePeers(sync);
@@ -66,7 +72,29 @@ export function ProjectView({ projectId, boardId }: { projectId: string; boardId
   }, [current, boardId, projectId]);
 
   const fileInput = useRef<HTMLInputElement>(null);
+  const onSelectionChange = useCallback((ids: string[]) => setSelection(ids), []);
+  useEffect(() => setSelection([]), [current]);
+  // Frames the current selection points at (a frame, or elements inside frames)
+  const selectedFrames = useMemo(() => {
+    if (!project || !current || !selection.length) return [];
+    const { elements } = boardScene(project, current);
+    const ids = framesForSelection(elements, selection);
+    return listFrames(elements).filter((f) => ids.includes(f.id));
+  }, [project, current, selection]);
   if (!project) return <div className="splash">Opening project…</div>;
+
+  const boardName = boards.find((b) => b.id === current)?.name ?? "Board";
+  const quickPdf = async () => {
+    if (!current) return;
+    setPdfBusy("Exporting…");
+    try {
+      await exportFramesPdf(project, current, selectedFrames.map((f) => f.id), "single", boardName);
+    } catch (e) {
+      setNotice(`PDF export failed: ${(e as Error).message}`);
+    } finally {
+      setPdfBusy("");
+    }
+  };
 
   const addBoard = () => {
     const id = project.createBoard(`Board ${boards.length + 1}`);
@@ -171,6 +199,15 @@ export function ProjectView({ projectId, boardId }: { projectId: string; boardId
           <button className="ghost small" onClick={() => fileInput.current?.click()}>Import .excalidraw…</button>
           <input ref={fileInput} type="file" accept=".excalidraw,.json" multiple hidden onChange={(e) => onImport(e.target.files)} />
           <button className="ghost small" onClick={exportBoard} disabled={!current}>Export board</button>
+          {selectedFrames.length > 0 ? (
+            <button className="small pdf-quick" onClick={quickPdf} disabled={!!pdfBusy} title="Export the selected frame(s) as PDF">
+              {pdfBusy ||
+                (selectedFrames.length === 1
+                  ? `PDF of “${selectedFrames[0].name}”`
+                  : `PDF of ${selectedFrames.length} selected frames`)}
+            </button>
+          ) : null}
+          <button className="ghost small" onClick={() => setPdfOpen(true)} disabled={!current}>Export frames to PDF…</button>
           <button
             className="ghost small"
             onClick={() => download(`${safeFileName(projectName || entry.name)}.tablo.json`, exportProject(project, projectName || entry.name))}
@@ -195,12 +232,21 @@ export function ProjectView({ projectId, boardId }: { projectId: string; boardId
 
       <main className="canvas">
         {current && project.getBoard(current) ? (
-          <BoardCanvas key={current} project={project} boardId={current} sync={sync} />
+          <BoardCanvas key={current} project={project} boardId={current} sync={sync} onSelectionChange={onSelectionChange} />
         ) : (
           <div className="splash muted">{entry.joined ? "Waiting for the project to arrive…" : "Create a board to start."}</div>
         )}
       </main>
 
+      {pdfOpen && current && (
+        <PdfDialog
+          project={project}
+          boardId={current}
+          boardName={boardName}
+          preselected={selectedFrames.map((f) => f.id)}
+          onClose={() => setPdfOpen(false)}
+        />
+      )}
       {askName && (
         <NameDialog
           initial={userName}

@@ -100,9 +100,10 @@ async function draw(p, k, x1, y1, x2, y2) {
 const browser = await chromium.launch({
   ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : { channel: "chrome" }),
   args: ["--disable-features=WebRtcHideLocalIpsWithMdns", "--allow-loopback-in-peer-connection"],
+  env: { ...process.env, LANG: "C.UTF-8", LC_ALL: "C.UTF-8" }, // keeps accented download names on Linux
 });
 try {
-  const A = await (await browser.newContext({ viewport: { width: 1400, height: 900 } })).newPage();
+  const A = await (await browser.newContext({ viewport: { width: 1400, height: 900 }, acceptDownloads: true })).newPage();
   const B = await (await browser.newContext({ viewport: { width: 1400, height: 900 } })).newPage();
   for (const [n, p] of [["Alice", A], ["Bob", B]])
     p.on("pageerror", (e) => { pageErrors++; console.log(`  [${n} page error]`, e.message); });
@@ -113,6 +114,16 @@ try {
   await A.waitForSelector(".excalidraw");
   await A.setInputFiles(".sidebar input[type=file]", FIXTURE);
   check("import .excalidraw as a new board", await waitFor(async () => (await boards(A)).length === 2), key(await boards(A)));
+  // PDF export of a frame, named after the frame
+  await A.click(".board-row >> nth=1 >> .board-open");
+  await sleep(1000);
+  await A.click("button:has-text('Export frames to PDF…')");
+  const [pdf] = await Promise.all([A.waitForEvent("download"), A.click(".frame-list li >> nth=0 >> button")]);
+  const pdfBytes = await readFile(await pdf.path());
+  check("frame exported as a PDF named after it", pdf.suggestedFilename() === "Participants – Session 1.pdf" && pdfBytes.subarray(0, 5).toString() === "%PDF-",
+        `${pdf.suggestedFilename()} (${pdfBytes.length} bytes)`);
+  await A.click("button:has-text('Close')");
+
   await A.click(".board-row >> nth=0 >> .board-open");
   await sleep(500);
   await draw(A, "r", 500, 300, 700, 450);

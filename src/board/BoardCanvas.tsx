@@ -67,9 +67,11 @@ type Props = {
   project: ProjectDoc;
   boardId: string;
   sync: P2PSync | null;
+  /** Called with the ids of the selected elements whenever the selection changes. */
+  onSelectionChange?: (ids: string[]) => void;
 };
 
-export function BoardCanvas({ project, boardId, sync }: Props) {
+export function BoardCanvas({ project, boardId, sync, onSelectionChange }: Props) {
   const board = project.getBoard(boardId)!;
   const elementsMap = board.get("elements") as ElementsMap;
   const filesMap = board.get("files") as FilesMap;
@@ -225,15 +227,15 @@ export function BoardCanvas({ project, boardId, sync }: Props) {
           /* ignore */
         }
       }
-      if (sync) {
-        const sel = Object.keys(appState.selectedElementIds).sort().join(",");
-        if (sel !== lastSelection.current) {
-          lastSelection.current = sel;
-          sync.setPresence({ selected: sel ? sel.split(",") : [] });
-        }
+      const sel = Object.keys(appState.selectedElementIds).sort().join(",");
+      if (sel !== lastSelection.current) {
+        lastSelection.current = sel;
+        const ids = sel ? sel.split(",") : [];
+        sync?.setPresence({ selected: ids });
+        onSelectionChange?.(ids);
       }
     },
-    [pushLocal, sync, vKey],
+    [pushLocal, sync, vKey, onSelectionChange],
   );
 
   const onApi = useCallback((api: ExcalidrawImperativeAPI) => {
@@ -290,6 +292,17 @@ export function BoardCanvas({ project, boardId, sync }: Props) {
       </WelcomeScreen>
     </Excalidraw>
   );
+}
+
+/** The board's current scene (copies, safe to hand to Excalidraw's export functions). */
+export function boardScene(project: ProjectDoc, boardId: string) {
+  const b = project.getBoard(boardId);
+  const elements = b
+    ? (Array.from((b.get("elements") as ElementsMap).values()).filter((e) => !e.isDeleted).map(clone).sort(byIndex) as unknown as El[])
+    : [];
+  const files: BinaryFiles = {};
+  (b?.get("files") as FilesMap | undefined)?.forEach((f, id) => (files[id] = clone(f) as unknown as BinaryFileData));
+  return { elements, files };
 }
 
 /** Snapshot of a board as an .excalidraw file (for export). */
