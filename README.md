@@ -19,7 +19,7 @@ host (GitHub Pages, Netlify, Cloudflare Pages).
 
 ### Publishing on GitHub Pages
 
-`.github/workflows/deploy.yml` builds and publishes the site on every push to `main`.
+`.github/workflows/deploy.yml` builds and publishes the site on every push to `main` or `master`.
 One-time setup in the GitHub repository: **Settings → Pages → Build and deployment → Source:
 GitHub Actions**. The site then lives at `https://<user>.github.io/<repo>/`. Optional relay
 settings (see *Configuration*) go under **Settings → Secrets and variables → Actions →

@@ -1,10 +1,10 @@
-# Publishes Tablo to GitHub Pages on every push to main.
+# Publishes Tablo to GitHub Pages on every push to main (or master).
 # One-time setup: repository Settings > Pages > Build and deployment > Source: "GitHub Actions".
 name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   workflow_dispatch: # allows a manual run from the Actions tab
 
 permissions:
