@@ -3,6 +3,11 @@
 // Each frame is rendered by Excalidraw to SVG (clipped to the frame), then drawn into the PDF
 // by svg2pdf.js: lines stay sharp and text stays selectable text. Excalidraw's fonts are
 // embedded from public/pdf-fonts (TrueType copies made by scripts/build-pdf-fonts.py).
+//
+// A PDF font only draws the characters it has, while the browser silently borrows missing ones
+// from other fonts. So each character is given a font that has it: the text's own font, else
+// Liberation Sans, else DejaVu Sans (Greek, maths, arrows...). A line with characters none of
+// them has (Chinese, emoji...) is drawn by the browser and placed as a sharp image instead.
 import { exportToSvg, getCommonBounds } from "@excalidraw/excalidraw";
 import type { BinaryFiles } from "@excalidraw/excalidraw/types";
 import type { ExcalidrawElement, ExcalidrawFrameLikeElement, NonDeletedExcalidrawElement } from "@excalidraw/excalidraw/element/types";
@@ -20,9 +25,6 @@ const FONT_FILES: Record<string, string> = {
   "Lilita One": "Lilita",
   "Comic Shanns": "ComicShanns",
   "Liberation Sans": "Liberation",
-};
-const FAMILY_BY_ID: Record<number, string> = {
-  1: "Virgil", 2: "Helvetica", 3: "Cascadia", 5: "Excalifont", 6: "Nunito", 7: "Lilita One", 8: "Comic Shanns", 9: "Liberation Sans",
 };
 const PT_PER_PX = 0.75; // CSS pixel = 1/96 in, PDF point = 1/72 in
 const MAX_PT = 14400; // PDF page size limit (200 in)
@@ -68,38 +70,167 @@ function elementsForFrame(all: readonly El[], frame: ExcalidrawFrameLikeElement)
   });
 }
 
+const FALLBACKS = ["Liberation", "DejaVuSans"];
+/** Name of a font inside the PDF: unique, so it never collides with the PDF's built-in Helvetica etc. */
+const pdfFontName = (file: string) => `Tablo-${file}`;
+
 const fontData = new Map<string, Promise<string>>();
+/**
+ * Load a font file: returns it as base64 for jsPDF, and also adds it to the page under its PDF
+ * name, because svg2pdf measures text with the browser (to place centred and mixed-font text).
+ */
 function loadFont(file: string): Promise<string> {
   if (!fontData.has(file)) {
-    fontData.set(
-      file,
-      fetch(new URL(`pdf-fonts/${file}.ttf`, document.baseURI)).then(async (r) => {
-        if (!r.ok) throw new Error(`font ${file} not found`);
-        const bytes = new Uint8Array(await r.arrayBuffer());
-        let bin = "";
-        for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-        return btoa(bin);
-      }),
-    );
+    const p = fetch(new URL(`pdf-fonts/${file}.ttf`, document.baseURI)).then(async (r) => {
+      if (!r.ok) throw new Error(`font ${file} not found`);
+      const buffer = await r.arrayBuffer();
+      try {
+        const face = new FontFace(pdfFontName(file), buffer);
+        document.fonts.add(await face.load());
+      } catch {
+        /* measuring falls back to another font: positions may be slightly off */
+      }
+      const bytes = new Uint8Array(buffer);
+      let bin = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      return btoa(bin);
+    });
+    p.catch(() => fontData.delete(file)); // try again next time
+    fontData.set(file, p);
   }
   return fontData.get(file)!;
 }
 
-async function registerFonts(doc: JsPDF, elements: readonly El[], done: Set<string>) {
-  const families = new Set<string>();
-  for (const e of elements) if (e.type === "text") families.add(FAMILY_BY_ID[e.fontFamily] ?? "Excalifont");
-  for (const family of families) {
-    const file = FONT_FILES[family];
-    if (!file || done.has(family)) continue;
-    try {
-      const data = await loadFont(file);
-      doc.addFileToVFS(`${file}.ttf`, data);
-      doc.addFont(`${file}.ttf`, family, "normal");
-      done.add(family);
-    } catch {
-      /* falls back to a built-in PDF font */
-    }
+type Coverage = Map<string, Uint32Array>; // font file -> sorted [start, end, start, end...]
+let coverage: Promise<Coverage> | null = null;
+function loadCoverage(): Promise<Coverage> {
+  coverage ??= fetch(new URL("pdf-fonts/coverage.json", document.baseURI))
+    .then((r) => (r.ok ? r.json() : {}))
+    .then((json: Record<string, [number, number][]>) => new Map(Object.entries(json).map(([k, v]) => [k, Uint32Array.from(v.flat())])))
+    .catch(() => {
+      coverage = null;
+      return new Map();
+    });
+  return coverage;
+}
+
+function covers(cov: Coverage, file: string, cp: number) {
+  const r = cov.get(file);
+  if (!r) return false;
+  let lo = 0, hi = r.length / 2 - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (cp < r[mid * 2]) hi = mid - 1;
+    else if (cp > r[mid * 2 + 1]) lo = mid + 1;
+    else return true;
   }
+  return false;
+}
+
+/** Embed a font in the PDF (once per document). */
+function registerFont(doc: JsPDF, file: string, done: Map<string, Promise<boolean>>) {
+  if (!done.has(file))
+    done.set(
+      file,
+      loadFont(file).then(
+        (data) => {
+          doc.addFileToVFS(`${file}.ttf`, data);
+          doc.addFont(`${file}.ttf`, pdfFontName(file), "normal");
+          return true;
+        },
+        () => false,
+      ),
+    );
+  return done.get(file)!;
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+// characters that take the font of their neighbours (spaces, joiners, variation selectors...)
+const NEUTRAL = /^[\s\u200b-\u200f\u2028-\u202f\u2060\ufe00-\ufe0f]$/u;
+
+/** Give every character of every text a font that has it (see the note at the top). */
+async function prepareText(svg: SVGSVGElement, doc: JsPDF, done: Map<string, Promise<boolean>>) {
+  const cov = await loadCoverage();
+  for (const t of Array.from(svg.querySelectorAll("text"))) {
+    const cssFamily = t.getAttribute("font-family") || "";
+    const first = cssFamily.split(",")[0].trim().replace(/^["']|["']$/g, "");
+    const chain = [...new Set([FONT_FILES[first] ?? "Liberation", ...FALLBACKS])];
+    const text = t.textContent ?? "";
+    const runs: { file: string | null; text: string }[] = [];
+    for (const ch of text) {
+      const last = runs[runs.length - 1];
+      const file = NEUTRAL.test(ch) && last ? last.file : (chain.find((f) => covers(cov, f, ch.codePointAt(0)!)) ?? null);
+      if (last && last.file === file) last.text += ch;
+      else runs.push({ file, text: ch });
+    }
+    const ok = runs.every((r) => r.file !== null) && (await Promise.all(runs.map((r) => registerFont(doc, r.file!, done)))).every(Boolean);
+    if (!ok || !cov.size) {
+      if (cov.size) await textToImage(t, cssFamily);
+      else if (await registerFont(doc, chain[0], done)) t.setAttribute("font-family", pdfFontName(chain[0]));
+      continue;
+    }
+    if (runs.length === 1) {
+      t.setAttribute("font-family", pdfFontName(runs[0].file!));
+      continue;
+    }
+    t.setAttribute("font-family", pdfFontName(runs[0].file!));
+    t.setAttribute("xml:space", "preserve"); // keep the spaces where one font hands over to the next
+    t.replaceChildren(
+      ...runs.map((r) => {
+        const span = document.createElementNS(SVG_NS, "tspan");
+        span.setAttribute("font-family", pdfFontName(r.file!));
+        span.setAttribute("xml:space", "preserve");
+        span.textContent = r.text;
+        return span;
+      }),
+    );
+  }
+}
+
+/** Draw one line of text with the browser (which has every font) and put it in as an image. */
+async function textToImage(t: SVGTextElement, cssFamily: string) {
+  const text = t.textContent ?? "";
+  const size = parseFloat(t.getAttribute("font-size") || "") || 16;
+  const font = `${size}px ${cssFamily || "sans-serif"}`;
+  try {
+    await document.fonts.load(font, text);
+  } catch {
+    /* draw with whatever is available */
+  }
+  const anchor = t.getAttribute("text-anchor") || "start";
+  const align: CanvasTextAlign = anchor === "middle" ? "center" : anchor === "end" ? "end" : "start";
+  const rtl = t.getAttribute("direction") === "rtl";
+  const ctx = document.createElement("canvas").getContext("2d")!;
+  ctx.font = font;
+  ctx.textAlign = align;
+  ctx.direction = rtl ? "rtl" : "ltr";
+  const m = ctx.measureText(text);
+  const pad = Math.ceil(size * 0.1);
+  const left = Math.ceil(m.actualBoundingBoxLeft) + pad;
+  const width = left + Math.ceil(m.actualBoundingBoxRight) + pad;
+  const ascent = Math.ceil(Math.max(m.actualBoundingBoxAscent, m.fontBoundingBoxAscent || 0)) + pad;
+  const height = ascent + Math.ceil(Math.max(m.actualBoundingBoxDescent, m.fontBoundingBoxDescent || 0)) + pad;
+  if (width <= 0 || height <= 0) return t.remove();
+  const scale = 6; // ~ 450 dpi at 100 %
+  const canvas = ctx.canvas;
+  canvas.width = Math.ceil(width * scale);
+  canvas.height = Math.ceil(height * scale);
+  ctx.scale(scale, scale);
+  ctx.font = font;
+  ctx.textAlign = align;
+  ctx.direction = rtl ? "rtl" : "ltr";
+  ctx.fillStyle = t.getAttribute("fill") || "#000";
+  ctx.fillText(text, left, ascent);
+  const img = document.createElementNS(SVG_NS, "image");
+  const x = parseFloat(t.getAttribute("x") || "0");
+  const y = parseFloat(t.getAttribute("y") || "0");
+  img.setAttribute("x", String(x - left));
+  img.setAttribute("y", String(y - ascent));
+  img.setAttribute("width", String(width));
+  img.setAttribute("height", String(height));
+  img.setAttribute("preserveAspectRatio", "none");
+  img.setAttribute("href", canvas.toDataURL("image/png"));
+  t.replaceWith(img);
 }
 
 /** svg2pdf draws PNG/JPEG only: turn other embedded images (SVG emojis, WebP, GIF...) into PNG. */
@@ -147,7 +278,7 @@ export async function framesToPdf(
   if (!frames.length) throw new Error("No frame to export");
 
   let doc: JsPDF | null = null;
-  const fonts = new Set<string>();
+  const fonts = new Map<string, Promise<boolean>>();
   const host = document.createElement("div"); // svg2pdf reads styles, so render attached but invisible
   host.style.cssText = "position:fixed;left:-100000px;top:0;visibility:hidden";
   document.body.appendChild(host);
@@ -178,7 +309,7 @@ export async function framesToPdf(
       const orientation = w > h ? "landscape" : "portrait";
       if (!doc) doc = new jsPDF({ unit: "pt", format: [w, h], orientation, compress: true });
       else doc.addPage([w, h], orientation);
-      await registerFonts(doc, els, fonts);
+      await prepareText(svg, doc, fonts);
       host.replaceChildren(svg);
       await doc.svg(svg, { x: 0, y: 0, width: w, height: h });
       onProgress?.(i + 1, frames.length);

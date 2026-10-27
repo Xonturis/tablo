@@ -14,8 +14,17 @@ export function useHashRoute(): string[] {
   return parts;
 }
 
+/** Go to a route. Always updates the app, even if the address bar already shows it. */
 export const navigate = (path: string) => {
-  location.hash = path;
+  if (location.hash === "#" + path) window.dispatchEvent(new HashChangeEvent("hashchange"));
+  else location.hash = path;
+};
+
+/** Replace the current route without adding a history entry, keeping the app in step. */
+export const replaceRoute = (path: string) => {
+  if (location.hash === "#" + path) return;
+  history.replaceState(null, "", "#" + path);
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
 };
 
 export function useProjects(): ProjectEntry[] {

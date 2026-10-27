@@ -31,7 +31,7 @@ export default defineConfig({
       workbox: {
         // The Excalidraw bundle is large; allow it in the offline cache
         maximumFileSizeToCacheInBytes: 15 * 1024 * 1024,
-        globPatterns: ["**/*.{js,css,html,svg,png,ico}", "pdf-fonts/*.ttf", "fonts/{Excalifont,Virgil,Nunito,Cascadia,Liberation,Assistant}/*.woff2"],
+        globPatterns: ["**/*.{js,css,html,svg,png,ico}", "pdf-fonts/*.{ttf,json}", "fonts/{Excalifont,Virgil,Nunito,Cascadia,Liberation,Assistant}/*.woff2"],
         runtimeCaching: [
           {
             // Other fonts (e.g. CJK) are cached the first time they are used

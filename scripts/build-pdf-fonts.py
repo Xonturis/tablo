@@ -5,7 +5,12 @@ family, so they can be embedded in exported PDFs (jsPDF needs TrueType).
 Run after `npm install` when upgrading Excalidraw:   python3 scripts/build-pdf-fonts.py
 Requires: pip install fonttools brotli
 Output: public/pdf-fonts/<Family>.ttf  (committed to the repo, so builds don't need Python)
+        public/pdf-fonts/DejaVuSans.ttf  fallback for characters those fonts lack (Greek, maths,
+                                         arrows...), copied from the system or $DEJAVU_SANS
+        public/pdf-fonts/coverage.json   which characters each font has, so the export can pick
+                                         a font per character
 """
+import json
 import glob
 import os
 import sys
@@ -25,6 +30,46 @@ def regular_files(family):
     files = sorted(glob.glob(os.path.join(SRC, family, "*.woff2")))
     regular = [f for f in files if "Regular" in os.path.basename(f)]
     return regular or files
+
+
+DEJAVU_PATHS = [
+    os.environ.get("DEJAVU_SANS", ""),
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    "/Library/Fonts/DejaVuSans.ttf",
+    os.path.expanduser("~/Library/Fonts/DejaVuSans.ttf"),
+]
+
+
+def ranges(codepoints):
+    out = []
+    for cp in sorted(codepoints):
+        if out and cp == out[-1][1] + 1:
+            out[-1][1] = cp
+        else:
+            out.append([cp, cp])
+    return out
+
+
+def write_coverage():
+    coverage = {}
+    for path in sorted(glob.glob(os.path.join(DEST, "*.ttf"))):
+        name = os.path.splitext(os.path.basename(path))[0]
+        coverage[name] = ranges(TTFont(path).getBestCmap().keys())
+    out = os.path.join(DEST, "coverage.json")
+    with open(out, "w") as f:
+        json.dump(coverage, f, separators=(",", ":"))
+    print(f"coverage of {len(coverage)} fonts -> {os.path.relpath(out, ROOT)}")
+
+
+def copy_fallback():
+    src = next((p for p in DEJAVU_PATHS if p and os.path.exists(p)), None)
+    dest = os.path.join(DEST, "DejaVuSans.ttf")
+    if src:
+        TTFont(src).save(dest)
+        print(f"DejaVuSans: {src} -> {os.path.relpath(dest, ROOT)}")
+    elif not os.path.exists(dest):
+        print("DejaVu Sans not found: set DEJAVU_SANS=/path/to/DejaVuSans.ttf", file=sys.stderr)
 
 
 def main():
@@ -50,6 +95,8 @@ def main():
                 merged = Merger().merge(ttfs) if len(ttfs) > 1 else TTFont(ttfs[0])
                 merged.save(out)
                 print(f"{family}: {len(ttfs)} subset(s) -> {os.path.relpath(out, ROOT)} ({os.path.getsize(out) // 1024} KB)")
+    copy_fallback()
+    write_coverage()
 
 
 if __name__ == "__main__":

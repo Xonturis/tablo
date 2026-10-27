@@ -6,26 +6,13 @@
 // No server stores anything; peers catch up with each other whenever they meet.
 import * as Y from "yjs";
 import { joinRoom, selfId, type JsonValue, type Room } from "trystero/nostr";
+import type { ConnectionMonitor, TurnServer } from "./net";
 
 const APP_ID = "tablo-v1";
 const RELAYS = (import.meta.env.VITE_NOSTR_RELAYS as string | undefined)
   ?.split(",")
   .map((s) => s.trim())
   .filter(Boolean);
-// Optional TURN relay, for networks where direct connections are blocked (some campus/corporate Wi-Fi)
-const TURN_URLS = (import.meta.env.VITE_TURN_URLS as string | undefined)
-  ?.split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-const TURN = TURN_URLS?.length
-  ? [
-      {
-        urls: TURN_URLS,
-        username: import.meta.env.VITE_TURN_USERNAME as string | undefined,
-        credential: import.meta.env.VITE_TURN_CREDENTIAL as string | undefined,
-      },
-    ]
-  : undefined;
 const FLUSH_MS = 40; // batch rapid local edits (dragging) into one message
 
 export type Presence = {
@@ -60,6 +47,7 @@ export class P2PSync {
     projectId: string,
     secret: string,
     userName: string,
+    net: { relays: TurnServer[]; monitor?: ConnectionMonitor } = { relays: [] },
   ) {
     this.presence = { name: userName, boardId: null, pointer: null, button: "up", selected: [] };
     this.room = joinRoom(
@@ -67,7 +55,8 @@ export class P2PSync {
         appId: APP_ID,
         password: secret,
         ...(RELAYS?.length ? { relayConfig: { urls: RELAYS } } : {}),
-        ...(TURN ? { turnConfig: TURN } : {}),
+        ...(net.relays.length ? { turnConfig: net.relays } : {}),
+        ...(net.monitor ? { rtcPolyfill: net.monitor.Polyfill } : {}),
       },
       projectId,
     );

@@ -4,8 +4,11 @@ import { getProjectDoc, type ProjectDoc } from "../store/project";
 import { P2PSync } from "../sync/p2p";
 import { BoardCanvas, boardToExcalidrawFile } from "../board/BoardCanvas";
 import { download, exportProject, importBoards, safeFileName } from "../board/importExport";
-import { navigate, useBoards, usePeers, useProjectName, useProjects } from "./hooks";
+import { navigate, replaceRoute, useBoards, usePeers, useProjectName, useProjects } from "./hooks";
 import { NameDialog } from "./NameDialog";
+import { BoardErrorBoundary } from "./BoardErrorBoundary";
+import { NetHint, NetSettingsDialog, useNetStatus } from "./NetSettings";
+import { ConnectionMonitor, onNetSettingsChange, resolveRelays } from "../sync/net";
 import { PdfDialog, exportFramesPdf } from "./PdfDialog";
 import { framesForSelection, listFrames } from "../board/pdfExport";
 import { boardScene } from "../board/BoardCanvas";
@@ -22,6 +25,11 @@ export function ProjectView({ projectId, boardId }: { projectId: string; boardId
   const [selection, setSelection] = useState<string[]>([]);
   const [pdfOpen, setPdfOpen] = useState(false);
   const [pdfBusy, setPdfBusy] = useState("");
+  const [monitor, setMonitor] = useState<ConnectionMonitor | null>(null);
+  const [netOpen, setNetOpen] = useState(false);
+  const [netVersion, setNetVersion] = useState(0);
+  useEffect(() => onNetSettingsChange(() => setNetVersion((v) => v + 1)), []);
+  const net = useNetStatus(monitor);
   const boards = useBoards(project);
   const projectName = useProjectName(project);
   const peers = usePeers(sync);
@@ -57,18 +65,29 @@ export function ProjectView({ projectId, boardId }: { projectId: string; boardId
       setAskName(true);
       return;
     }
-    const s = new P2PSync(project.doc, projectId, entry.secret, userName);
-    setSync(s);
+    let s: P2PSync | null = null;
+    let cancelled = false;
+    // Relay settings may need fetching (credentials URL) before joining
+    resolveRelays().then(({ servers, error }) => {
+      if (cancelled) return;
+      const m = new ConnectionMonitor(servers.length, error);
+      s = new P2PSync(project.doc, projectId, entry.secret, userName, { relays: servers, monitor: m });
+      setMonitor(m);
+      setSync(s);
+    });
     return () => {
+      cancelled = true;
       setSync(null);
-      void s.leave();
+      setMonitor(null);
+      if (s) void s.leave();
     };
-  }, [project, entry.sharing, entry.secret, projectId, userName]);
+  }, [project, entry.sharing, entry.secret, projectId, userName, netVersion]);
 
   // Pick a board: the one in the URL, else the first
   const current = boards.find((b) => b.id === boardId) ? boardId : boards[0]?.id ?? null;
   useEffect(() => {
-    if (current && current !== boardId) history.replaceState(null, "", `#/p/${projectId}/${current}`);
+    // Keep the address bar and the app in step (a stale address made board clicks do nothing)
+    if (current && current !== boardId) replaceRoute(`/p/${projectId}/${current}`);
   }, [current, boardId, projectId]);
 
   const fileInput = useRef<HTMLInputElement>(null);
@@ -139,11 +158,16 @@ export function ProjectView({ projectId, boardId }: { projectId: string; boardId
           {entry.sharing ? (
             <>
               <div className="status">
-                <span className={`dot ${peers.length ? "on" : ""}`} />
+                <span className={`dot ${peers.length ? "on" : net && net.failed > 0 ? "bad" : ""}`} />
                 {peers.length
-                  ? `${peers.length} other ${peers.length > 1 ? "people" : "person"} connected`
-                  : "Shared · nobody else online"}
+                  ? `${peers.length} other ${peers.length > 1 ? "people" : "person"} connected${net?.viaRelay ? " (via relay)" : ""}`
+                  : net && net.checking > 0
+                    ? "Connecting to a collaborator…"
+                    : net && net.failed > 0
+                      ? "Couldn't connect to a collaborator"
+                      : "Shared · nobody else online"}
               </div>
+              {!peers.length && net && <NetHint net={net} onSetup={() => setNetOpen(true)} />}
               {peers.length > 0 && (
                 <ul className="peers">
                   {peers.map((p) => (
@@ -159,7 +183,10 @@ export function ProjectView({ projectId, boardId }: { projectId: string; boardId
                   ))}
                 </ul>
               )}
-              <button className="small" onClick={() => setShareOpen(true)}>Share link…</button>
+              <span className="row">
+                <button className="small" onClick={() => setShareOpen(true)}>Share link…</button>
+                <button className="ghost small" onClick={() => setNetOpen(true)} title="Relay server for networks that block direct connections">Connection…</button>
+              </span>
             </>
           ) : (
             <button className="primary" onClick={startSharing}>Share project…</button>
@@ -232,12 +259,25 @@ export function ProjectView({ projectId, boardId }: { projectId: string; boardId
 
       <main className="canvas">
         {current && project.getBoard(current) ? (
-          <BoardCanvas key={current} project={project} boardId={current} sync={sync} onSelectionChange={onSelectionChange} />
+          <BoardErrorBoundary key={current} boardName={boardName}>
+            <BoardCanvas project={project} boardId={current} sync={sync} onSelectionChange={onSelectionChange} />
+          </BoardErrorBoundary>
         ) : (
-          <div className="splash muted">{entry.joined ? "Waiting for the project to arrive…" : "Create a board to start."}</div>
+          <div className="splash muted">
+            {entry.joined ? (
+              <div className="waiting-box">
+                <p>Waiting for the project to arrive…</p>
+                <p className="small">It comes from a collaborator who has it open: ask them to open the project.</p>
+                {net && <NetHint net={net} onSetup={() => setNetOpen(true)} />}
+              </div>
+            ) : (
+              "Create a board to start."
+            )}
+          </div>
         )}
       </main>
 
+      {netOpen && <NetSettingsDialog onClose={() => setNetOpen(false)} />}
       {pdfOpen && current && (
         <PdfDialog
           project={project}

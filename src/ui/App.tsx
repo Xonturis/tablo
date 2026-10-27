@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getProject, libraryReady, parseShareLink, updateProject, upsertProject } from "../store/library";
-import { navigate, useHashRoute } from "./hooks";
+import { navigate, replaceRoute, useHashRoute } from "./hooks";
 import { Home } from "./Home";
 import { ProjectView } from "./ProjectView";
 
@@ -32,8 +32,7 @@ export function App() {
         joined: true,
       });
     }
-    history.replaceState(null, "", `#/p/${link.id}`);
-    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    replaceRoute(`/p/${link.id}`);
   }, [ready, route]);
 
   if (!ready || route[0] === "join") return <div className="splash">Loading…</div>;

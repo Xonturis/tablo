@@ -9,7 +9,10 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test:e2e": "node tests/e2e.mjs"
+    "test:e2e": "node tests/e2e.mjs",
+    "test:tools": "node tests/tools-ai.mjs",
+    "test": "node tests/e2e.mjs && node tests/tools-ai.mjs && node tests/network.mjs",
+    "test:net": "node tests/network.mjs"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "^0.18.1",

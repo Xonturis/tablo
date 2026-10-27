@@ -4,8 +4,8 @@
 // Conflicts are resolved per element the same way Excalidraw's own collaboration does:
 // the higher `version` wins, ties are broken by the lower `versionNonce`.
 // Deleted elements are kept as tombstones (`isDeleted: true`) so deletions sync too.
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Excalidraw, CaptureUpdateAction, MainMenu, WelcomeScreen } from "@excalidraw/excalidraw";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Excalidraw, CaptureUpdateAction, MainMenu, TTDDialog, TTDDialogTrigger, WelcomeScreen } from "@excalidraw/excalidraw";
 import type {
   AppState,
   BinaryFileData,
@@ -19,6 +19,10 @@ import "@excalidraw/excalidraw/index.css";
 import type { ElementsMap, FilesMap, ProjectDoc } from "../store/project";
 import { colorFor } from "../store/library";
 import type { P2PSync } from "../sync/p2p";
+import { ToolsPanel } from "./ToolsPanel";
+import { AiPanel } from "./AiPanel";
+import { loadAiSettings } from "../ai/client";
+import { textToMermaid } from "../ai/assistant";
 
 type El = OrderedExcalidrawElement;
 type Json = Record<string, unknown>;
@@ -238,9 +242,26 @@ export function BoardCanvas({ project, boardId, sync, onSelectionChange }: Props
     [pushLocal, sync, vKey, onSelectionChange],
   );
 
+  const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
+  const [aiOpen, setAiOpenState] = useState(() => {
+    try {
+      return sessionStorage.getItem("tablo.aiOpen") === "1"; // stays open when switching boards
+    } catch {
+      return false;
+    }
+  });
+  const setAiOpen = (open: boolean) => {
+    setAiOpenState(open);
+    try {
+      sessionStorage.setItem("tablo.aiOpen", open ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  };
   const onApi = useCallback((api: ExcalidrawImperativeAPI) => {
     const first = !apiRef.current;
     apiRef.current = api;
+    if (first) setApi(api);
     if (first && !readViewport(vKey)) {
       // First visit of this board on this device: fit everything on screen
       setTimeout(() => {
@@ -262,7 +283,18 @@ export function BoardCanvas({ project, boardId, sync, onSelectionChange }: Props
 
   const peersHere = sync ? sync.getPeers().length > 0 : false;
 
+  const onTextSubmit = useCallback(async (description: string) => {
+    const settings = loadAiSettings();
+    if (!settings) return { error: new Error("Connect a model first: click ✨ AI (top right of the board), then ⚙.") };
+    try {
+      return { generatedResponse: await textToMermaid(settings, description) };
+    } catch (e) {
+      return { error: e as Error };
+    }
+  }, []);
+
   return (
+    <div className="board">
     <Excalidraw
       key={boardId}
       excalidrawAPI={onApi}
@@ -283,6 +315,8 @@ export function BoardCanvas({ project, boardId, sync, onSelectionChange }: Props
         <MainMenu.Separator />
         <MainMenu.DefaultItems.Help />
       </MainMenu>
+      <TTDDialog onTextSubmit={onTextSubmit} />
+      <TTDDialogTrigger />
       <WelcomeScreen>
         <WelcomeScreen.Hints.ToolbarHint />
         <WelcomeScreen.Hints.HelpHint />
@@ -291,6 +325,17 @@ export function BoardCanvas({ project, boardId, sync, onSelectionChange }: Props
         </WelcomeScreen.Center>
       </WelcomeScreen>
     </Excalidraw>
+    {api && (
+      <div className="board-overlays">
+        {aiOpen ? (
+          <AiPanel api={api} onClose={() => setAiOpen(false)} />
+        ) : (
+          <button className="ai-toggle" onClick={() => setAiOpen(true)} title="AI assistant">✨ AI</button>
+        )}
+        <ToolsPanel api={api} />
+      </div>
+    )}
+    </div>
   );
 }
 

@@ -3,9 +3,13 @@ node_modules
 dist
 dev-dist
 dist-e2e
+dist-net
 
 # Personal board backups (research data): never commit
 mirobackup/
 
 # macOS
 .DS_Store
+
+# Files the Claude app saves into this folder
+Claude outputs/
